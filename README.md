@@ -35,4 +35,4 @@ ICSC mostly supports [SystemC Synthesizable Subset](https://www.accellera.org/im
 
 ## Help
 
-To get help please [submit your question or issue](https://github.com/intel/systemc-compiler/issues).
+To get help please [submit your question or issue](https://github.com/intel/systemc-compiler/issues)
