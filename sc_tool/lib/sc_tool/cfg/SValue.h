@@ -38,6 +38,8 @@ class SValue;
 
 /// No value used for @RValue if there is no value in state
 extern const SValue NO_VALUE;
+/// Zero width integer value, generated as unsigned 32bit 0, radix 100
+extern const SValue ZW_VALUE;
 
 /// Typed value in state.
 /// SValue owns @otInteger, @otVariable and @otTemporary, 
@@ -51,7 +53,7 @@ protected:
     ///  @otChannel     -- any channel like ScPort and ScSignal
     enum SObjectType {otMemory = 0, otChannel = 1, otUnknown = 2, 
                       otIntegerDec = 3, otIntegerHex = 4, otIntegerBin = 5, 
-                      otIntegerOct = 6};
+                      otIntegerOct = 6, otZeroWidth = 7};
     
     /// Object type
     SObjectType type;
@@ -167,6 +169,9 @@ public:
     
     /// Return integer radix or 0
     char getRadix() const;
+    
+    /// Check is it sct_zero_width literal, radix == 100
+    char isScZeroWidth() const;
 
     /// Set given radix for integer, ignored if @this is not integer
     void setRadix(char radix);
@@ -224,10 +229,8 @@ public:
     /// Compare two APSInt including bit width and signedness 
     static bool exactEqual(const llvm::APSInt& int1, const llvm::APSInt& int2) 
     {
-        if (int1.getBitWidth() != int2.getBitWidth()) 
-            return false;
-        if (int1.isUnsigned() != int2.isUnsigned()) 
-            return false;
+        if (int1.getBitWidth() != int2.getBitWidth()) return false;
+        if (int1.isUnsigned() != int2.isUnsigned()) return false;
         return (int1 == int2);
     }
     
@@ -447,6 +450,10 @@ public:
     bool isLocal() const {
         return var;
     };
+    
+    bool isTemp() const {
+        return var.isTmpVariable();
+    }
     
     /// Get string with all base class names including this class name
     static std::string getBaseString(const SRecord& obj) 

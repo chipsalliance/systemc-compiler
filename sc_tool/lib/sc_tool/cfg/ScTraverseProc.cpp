@@ -89,8 +89,8 @@ ScTraverseProc::getSvaInLoopStr(const std::string& svaStr, bool isResetSection)
         tabStr += "    ";
     }
     
-    loopStr += tabStr + (assertName ? (*assertName+" : ") : "") +
-               "assert property ( " + svaStr + " );\n";
+    loopStr += tabStr + (assertName ? (*assertName+(isResetSection ? "r":"")+
+                         " : ") : "") + "assert property ( " + svaStr + " );\n";
     
     for (size_t i = 0; i != loopStack.size(); ++i) {
         tabStr = tabStr.substr(0, tabStr.size()-4);
@@ -251,7 +251,9 @@ void ScTraverseProc::prepareCallContext(clang::Expr* expr,
                                      const clang::FunctionDecl* callFuncDecl,
                                      const SValue& retVal) 
 {
-    // Store return value for the call expression to replace where it used
+    SCT_TOOL_ASSERT (!inFuncParams, 
+                     "Function call or constructor in another call parameter");
+
     auto i = calledFuncs.emplace(expr, make_pair(retVal, NO_VALUE));
     if (!i.second) {
         cout << hex << expr << dec << endl;
@@ -370,6 +372,11 @@ void ScTraverseProc::parseCall(CallExpr* expr, SValue& val)
 void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval, 
                                      SValue& val) 
 {
+    // Get @this expression and its type
+    Expr* thisExpr = expr->getImplicitObjectArgument();
+    QualType thisType = thisExpr->getType();
+    bool isZeroWidth = isZeroWidthType(thisType);
+    
     // Parse this expression inside and put result into @tval
     ScGenerateExpr::parseMemberCall(expr, tval, val);
     // Return value passed in @val
@@ -380,11 +387,7 @@ void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval,
     string fname = methodDecl->getNameAsString();
     QualType retType = methodDecl->getReturnType();
     
-    // Get @this expression and its type
-    Expr* thisExpr = expr->getImplicitObjectArgument();
-    QualType thisType = thisExpr->getType();
-    
-    if ( isAnyScIntegerRef(thisType, true) ) {
+    if ( isAnyScIntegerRef(thisType, true) || isZeroWidth ) {
         // Do nothing 
         
     } else 
@@ -419,7 +422,7 @@ void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval,
                  << expr->getSourceRange().getBegin().printToString(sm) << ") |" << endl;
             cout << "-------------------------------------" << endl;
         }
-        
+                    
         auto callStack = contextStack.getStmtStack();
         callStack.push_back(expr);
         auto i = constEvalFuncs.find(callStack);
@@ -448,7 +451,8 @@ void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval,
             // This value *this must be a kind of record
             if (!ttval.isRecord()) {
                 ScDiag::reportScDiag(expr->getBeginLoc(),
-                                     ScDiag::SYNTH_INCORRECT_RECORD) << tval << ttval;
+                                     ScDiag::SYNTH_INCORRECT_RECORD) 
+                                << tval.asString() << ttval.asString();
             }
 
             // Call with cast this object to specific class with "::",
@@ -462,7 +466,7 @@ void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval,
             SValue dyntval = ttval;
             // @modval for called function analysis
             SValue funcModval = ttval;
-
+            
             // Get best virtual function and its dynamic class for @funcDecl
             if (methodDecl->isVirtualAsWritten() && !hasClassCast) {
                 // Get dynamic class for member record
@@ -488,18 +492,119 @@ void ScTraverseProc::parseMemberCall(CXXMemberCallExpr* expr, SValue& tval,
                      << ", funcModval " << funcModval.asString() << endl;
             }
 
+            // Register SS channels which needs to be added into sensitivity
+            if ( isSctChannelSens(funcModval.getType(), methodDecl) ) {
+                //cout << "TraverseProc funcModval " << funcModval << " ttval " << ttval << endl;
+                // Skip @sct_target if it has FIFO inside
+                if (isSctTarg(modval.getType()) && isSctFifo(funcModval.getType())) {
+                    auto elabObj = state->getElabObject(modval);
+                    skipSctTargets.insert(*elabObj);
+                }
+                
+                if (auto elabObj = state->getElabObject(funcModval)) {
+                    usedSctChannels.insert(*elabObj);
+                }
+            }
+
             // Generate function parameter assignments
             prepareCallParams(expr, funcModval, methodDecl);
             // Register return value and prepare @lastContext
             prepareCallContext(expr, funcModval, NO_VALUE, methodDecl, retVal);        
             // Return value variable has call point level
             state->setValueLevel(retVal, level);
-
+            
             // Set record expression (record name and indices) to use in called function
             if (auto thisStr = codeWriter->getStmtString(thisExpr)) {
                 codeWriter->setRecordName(funcModval, thisStr.getValue());
                 //cout << "   thisStr : " << thisStr.getValue() << endl;
             }
+        }
+    }
+}
+
+// Operator call expression
+void ScTraverseProc::parseOperatorCall(CXXOperatorCallExpr* expr, SValue& tval,
+                                       SValue& val) 
+{
+    SCT_TOOL_ASSERT (expr->getNumArgs() != 0, "Operator without arguments");
+    Expr* thisExpr = expr->getArgs()[0];
+    bool isZeroWidth = isZeroWidthType(thisExpr->getType());
+    
+    // Parse this expression inside and put result into @tval
+    ScGenerateExpr::parseOperatorCall(expr, tval, val);
+
+    // Get operator method
+    FunctionDecl* methodDecl = expr->getCalleeDecl()->getAsFunction();
+    string fname = methodDecl->getNameAsString();
+    QualType retType = methodDecl->getReturnType();
+    
+    OverloadedOperatorKind opcode = expr->getOperator();
+    bool isAssignOperator = expr->isAssignmentOp() && opcode == OO_Equal;
+    bool isSctChan = isAssignOperatorSupported(tval.getType());
+    
+    if (isZeroWidth) {
+        // Do nothing 
+        
+    } else 
+    if (isAssignOperator && isSctChan) {
+        // Operator call in sct namespace
+        if (DebugOptions::isEnabled(DebugComponent::doGenFuncCall)) {
+            cout << "-------------------------------------" << endl;
+            cout << "| Build CFG for OPERATOR : " << fname << " (" 
+                 << expr->getSourceRange().getBegin().printToString(sm) << ") |\n";
+            cout << "-------------------------------------" << endl;
+        }
+        
+        // Return value passed in @val
+        SValue retVal = val;
+        
+        // Declare temporal variable if it is not a pointer
+        if (!isVoidType(retType) && !isPointer(retType)) {
+            codeWriter->putVarDecl(nullptr, retVal, retType, nullptr, false, level);
+        }
+
+        // Get record from variable/dynamic object, no unknown index here
+        SValue ttval = getRecordFromState(tval, ArrayUnkwnMode::amNoValue);
+        //cout << "parseMemberCall tval " << tval << ", ttval " << ttval << endl;
+
+        // This value *this must be a kind of record
+        if (!ttval.isRecord()) {
+            ScDiag::reportScDiag(expr->getBeginLoc(),
+                                 ScDiag::SYNTH_INCORRECT_RECORD) 
+                            << tval.asString() << ttval.asString();
+        }
+
+        // Dynamic class for member record
+        SValue dyntval = ttval;
+        // @modval for called function analysis
+        SValue funcModval = ttval;
+
+        // Virtual operators not supported
+        if (methodDecl->isVirtualAsWritten()) {
+            SCT_INTERNAL_ERROR(expr->getBeginLoc(), "No virtual operator supported");
+        }
+
+        if (DebugOptions::isEnabled(DebugComponent::doGenFuncCall)) {
+            cout << "Function call this class value " << ttval.asString()
+                 << ", dynamic class value " << dyntval.asString() 
+                 << ", funcModval " << funcModval.asString() << endl;
+        }
+
+        // Generate function parameter assignments
+        prepareCallParams(expr, funcModval, methodDecl);
+        // Register return value and prepare @lastContext
+        prepareCallContext(expr, funcModval, NO_VALUE, methodDecl, retVal);        
+        // Return value variable has call point level
+        state->setValueLevel(retVal, level);
+
+        // Get @this expression 
+        Expr** args = expr->getArgs();
+        Expr* thisExpr = args[0];
+
+        // Set record expression (record name and indices) to use in called function
+        if (auto thisStr = codeWriter->getStmtString(thisExpr)) {
+            codeWriter->setRecordName(funcModval, thisStr.getValue());
+            //cout << "   thisStr : " << thisStr.getValue() << endl;
         }
     }
 }
@@ -847,21 +952,23 @@ void ScTraverseProc::run()
                     // Get statement level and check if it is sub-statement
                     bool isStmt = false; 
                     bool isCallSubStmt = false;
+                    bool isZeroWidth = isZeroWidthCall(currStmt);
                     if (auto stmtLevel = stmtInfo.getLevel(currStmt)) {
-                        level = *stmtLevel; 
-                        isStmt = true;
+                        level = *stmtLevel;
+                        isStmt = !isZeroWidth;
 
                     } else 
                     if (auto stmtLevel = stmtInfo.getDeclGroupLevel(currStmt)) {
                         level = *stmtLevel;
-                        isStmt = true;
+                        isStmt = !isZeroWidth;
                         
                     } else 
                     if (auto superStmt = stmtInfo.getSuperStmt(currStmt)) {
                         if (auto superStmtLevel = stmtInfo.getLevel(superStmt)) {
                             level = *superStmtLevel;
-                            isCallSubStmt = isUserCallExpr(currStmt); 
-                            isStmt = isCallSubStmt && !isIoStreamStmt(superStmt) &&
+                            isCallSubStmt = isUserCallExpr(currStmt);
+                            isStmt = isCallSubStmt && !isZeroWidth &&
+                                     !isIoStreamStmt(superStmt) &&
                                      !codeWriter->isParseSvaArg();
                         }
                         //cout << hex << "getSubStmtLevel " << currStmt << endl;
@@ -924,13 +1031,13 @@ void ScTraverseProc::run()
                             // Temporal assertion in process
                             if (!inMainLoop) {
                                 if (!noSvaGenerate) {
-                                    if (auto str = getSvaInLoopStr(*stmtStr, 
-                                                   isResetSection)) {
-                                        if (isResetSection) {
+                                    if (isResetSection) {
+                                        if (auto str = getSvaInLoopStr(*stmtStr, 1)) {
                                             sctRstAsserts.insert(*str);
-                                        } else {
-                                            sctAsserts.insert(*str);
                                         }
+                                    }
+                                    if (auto str = getSvaInLoopStr(*stmtStr, 0)) {
+                                        sctAsserts.insert(*str);
                                     }
                                 }
                             } else {
@@ -1079,8 +1186,8 @@ void ScTraverseProc::run()
                         // Get(create) CFG for function and setup next block
                         cfg = cfgFabric->get(funcDecl);
                         if (!cfg) {
-                            SCT_INTERNAL_ERROR(currStmt->getBeginLoc(), 
-                                               "Function CFG is null");
+                            SCT_INTERNAL_FATAL(currStmt->getBeginLoc(), 
+                                "No function body found, probably STL function");
                         }
                         block = AdjBlock(&cfg->getEntry(), true);
                         exitBlockId = cfg->getExit().getBlockID();
@@ -2036,7 +2143,7 @@ void ScTraverseProc::setTermConds(const unordered_map<CallStmtStack, SValue>& co
 }
 
 void ScTraverseProc::setConstEvalFuncs(const std::unordered_map<
-                                             CallStmtStack, SValue>& funcs) 
+                                       CallStmtStack, SValue>& funcs) 
 {
     for (const auto& entry : funcs) {
         // Skip NO_VALUE first as it could be for non-function call
@@ -2054,6 +2161,54 @@ void ScTraverseProc::setConstEvalFuncs(const std::unordered_map<
         if (hasWaitFuncs.count(funcDecl) != 0) continue;
 
         constEvalFuncs.insert(entry);
+    }
+}
+
+/// Report lack/extra sensitive to SS channels
+void ScTraverseProc::reportSctChannel(sc_elab::ProcessView procView,
+                                      const clang::FunctionDecl* funcDecl) 
+{
+    using namespace sc_elab;
+    
+    // Skip process if it is inside SS channel
+    ModuleMIFView parent = procView.getParentModuleOrMIF();
+    
+    if (!isSctChannelSens(parent.getType(), funcDecl)) {
+        std::unordered_set<sc_elab::ObjectView> sensSctChannels;
+        for (auto sensEvent : procView.staticSensitivity()) {
+
+            ArrayElemObjWithIndices source{sensEvent.sourceObj};
+            source = source.obj.getAsArrayElementWithIndicies();
+
+            ModuleMIFView parent = source.obj.getParentModuleOrMIF();
+            if ( isSctChannelSens(parent.getType(), nullptr) ) {
+                //std::cout << "  ADD to sens " << parent.getDebugString() << "\n";
+                sensSctChannels.insert(parent);
+            }
+        }
+        
+        std::unordered_set<sc_elab::ObjectView> usedChannels;
+        for (ObjectView obj : usedSctChannels) {
+            if (skipSctTargets.count(obj) == 0) {
+                usedChannels.insert(obj);
+            }
+        }
+
+        for (ObjectView obj : sensSctChannels) {
+            if (usedChannels.count(obj) == 0) {
+                ScDiag::reportScDiag(funcDecl->getBeginLoc(), 
+                    ScDiag::SYNTH_EXTRA_SENSTIV_THREAD) << obj.getDebugString();
+            }
+            //std::cout << "  sens " <<obj.getDebugString() << "\n";
+        }
+
+        for (ObjectView obj : usedChannels) {
+            if (sensSctChannels.count(obj) == 0) {
+                ScDiag::reportScDiag(funcDecl->getBeginLoc(), 
+                    ScDiag::SYNTH_NON_SENSTIV_THREAD) << obj.getDebugString();
+            }
+            //std::cout << "  used " <<obj.getDebugString() << "\n";
+        }
     }
 }
 

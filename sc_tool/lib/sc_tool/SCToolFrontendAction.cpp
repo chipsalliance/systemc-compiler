@@ -123,8 +123,8 @@ Object* getOuterArray(SCDesign& designDB, Object* memberObj)
     return arrayObj;
 }
 
-const std::string SCElabASTConsumer::TOOL_VERSION = "1.4.38";
-const std::string SCElabASTConsumer::TOOL_DATE = "Aug 20,2022";
+const std::string SCElabASTConsumer::TOOL_VERSION = "1.5.9";
+const std::string SCElabASTConsumer::TOOL_DATE = "Apr 07,2023";
 
 void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
 {
@@ -138,21 +138,17 @@ void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
     
     //const char* optNames[] = {doElab};
     //const char* optNames[] = {doConstCfg, doGenCfg};
-    //const char* optNames[] = {doModuleBuilder, doGenCfg, doGenTerm, doGenRTL, doGenStmt, doGenBlock};
-    //const char* optNames[] = {doModuleBuilder, doGenCfg, doGenStmt, doGenFuncCall, doVerWriter};
-    //const char* optNames[] = {doModuleBuilder, doGenStmt, doGenName, doGenRTL}; 
-    //const char* optNames[] = {doModuleBuilder, doConstCfg, doConstTerm, doConstBlock, doGenCfg};
     //const char* optNames[] = {doGenCfg, doGenLoop, doGenBlock, doModuleBuilder}; 
     //const char* optNames[] = {doModuleBuilder, doConstStmt, doConstCfg/*, doState*/};
     //const char* optNames[] = {doModuleBuilder, doGenStmt};
     //const char* optNames[] = {doGenTerm, doGenCfg, doGenStmt, doModuleBuilder};
     //const char* optNames[] = {doConstCfg, doConstLoop, doConstStmt, doConstBlock, doModuleBuilder};
+    //const char* optNames[] = {doGenStmt, doConstStmt, doModuleBuilder};  
     //const char* optNames[] = {doConstStmt, doGenStmt, doModuleBuilder};  
-    //const char* optNames[] = {doPortBind, doModuleBuilder};  
-    const char* optNames[] = {doGenRTL, doGenStmt, doModuleBuilder};  
+    const char* optNames[] = {doModuleBuilder};
     size_t optSize = sizeof(optNames)/sizeof(const char*);
-    //DebugOptions::enable(optNames, optSize); 
-   
+    //DebugOptions::enable(optNames, optSize);
+    
     //keepConstVariables = true;
  
     // Find pointer to top-level module by SystemC name
@@ -207,6 +203,9 @@ void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
         } catch (std::exception& e) {
             std::cout << "----------------------------------------------------------------" << std::endl;
             std::cout << " SystemC-to-Verilog translation, ERROR " << std::endl;
+            
+            // Report exception to return error code at exit
+            reportErrorException();
         }
         
     } else {

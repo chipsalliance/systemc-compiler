@@ -387,15 +387,39 @@ There are some limitation to variable use in reset section of clocked thread des
 This section describes types can be used in process functions. 
 SystemC integer types {\tt sc\_int}, {\tt sc\_uint}, {\tt sc\_bigint}, {\tt sc\_biguint} are supported. C++ {\tt bool}, {\tt char}, {\tt short}, {\tt integer}, {\tt long integer} and {\tt long long integer} and their unsigned versions are supported. Generated SystemVerilog data types shown in Table~\ref{tab:data_types}.
 
+There are two special types {\tt sct\_uint<N>} and {\tt sct\_int<N>} provided. They are bit-accurate integer types which support any number of bits:
+\begin{itemize}
+\item {\tt sct\_int<N>} is signed integer with N bits, where N is zero or positive,
+\item {\tt sct\_uint<N>} is unsigned integer with N bits, where N is zero or positive.
+\end{itemize}
+
+{\tt sct\_int<N>} and {\tt sct\_uint<N>} types automatically substitute {\tt sc\_int<N>} or {\tt sct\_bigint<N>} and {\tt sct\_uint<N>} or {\tt sct\_biguint<N>} depends on bit width. These types are implemented in {\tt sct\_sel\_types.h}.
+
+To initialize a variable of {\tt sct\_uint<N>} type with all bits 0 or 1 there are special templates:
+\begin{itemize}
+\item {\tt sct\_zeros<N>} is N-bit zeros literal of {\tt sct\_uint<N>} type,
+\item {\tt sct\_ones<N>} is N-bit ones literal of {\tt sct\_uint<N>} type.
+\end{itemize}
+
+\begin{lstlisting}[style=mycpp]
+// Variable declaration with 0/1 initialization
+sct_uint<12> a = sct_zeros<12>;
+sct_uint<66> b = sct_ones<66>;
+auto c  = sct_zeros<90>;
+\end{lstlisting}
+
 \begin{table}
 \begin{tabular}{|l|l|l|}
 \hline
 SC/C++ type & SV type  & SC synthesizable subset \\
 \hline
-sc\_uint<N> & logic [N] & \\
-sc\_biguint<N> & logic [N] & \\
-sc\_int<N> & logic signed [N] & \\
-sc\_bigint<N> & logic signed [N] & \\
+sct\_uint<N> & logic [N] & N is 0...+inf \\
+sct\_int<N> & logic signed [N] & N is 0...+inf \\
+sc\_uint<N> & logic [N] & N is 1...64 \\
+sc\_biguint<N> & logic [N] & N is 1...+inf \\
+sc\_int<N> & logic signed [N] & N is 1...64 \\
+sc\_bigint<N> & logic signed [N] & N is 1...+inf \\
+sc\_bv<N> & logic [N] & \\
 bool & logic & \\
 char, signed char & logic signed [8] & \\
 unsigned char & logic [8] & \\
@@ -415,10 +439,24 @@ unsigned long long & logic [64] & 64bit \\
 \label{tab:data_types}
 \end{table}
 
+Zero width integer types {\tt sct\_int<0>} and {\tt sct\_uint<0>} intended to represent optional variables, signals, ports and record fields. In the generated SV such variables are not declared, assignment to such variable is not generated, using such variable as RValue replaced with {\tt 0}. The same works for zero width signals, ports and record fields.
+
+\begin{lstlisting}[style=mycpp]
+template <unsigned N>
+struct MyModule : public sc_module {
+  sct_uint<N> optVar;
+  sc_in<sct_uint<N>> optInPort{"optInPort"};
+  sc_signal<sct_uint<N>> optSig{"optSig"};
+  struct Rec {
+     sct_uint<N> optField;     
+  };
+}
+\end{lstlisting}
+
 Uninitialized local variable of SystemC types (sc\_uint, sc\_biguint, sc\_int, sc\_biguint) has got zero value in generated code as it got this value in the default constructor.
 That means declaration of such variable leads to its initialization by {\tt 0}.
 
-Not supported SystemC data types: {\tt sc\_bv}, {\tt sc\_lv}, {\tt sc\_logic}, {\tt sc\_signed}, {\tt sc\_unsigned}, {\tt sc\_fix}, {\tt sc\_ufix}, {\tt sc\_fixed}, {\tt sc\_ufixed}. 
+Not supported SystemC data types: {\tt sc\_lv}, {\tt sc\_logic}, {\tt sc\_signed}, {\tt sc\_unsigned}, {\tt sc\_fix}, {\tt sc\_ufix}, {\tt sc\_fixed}, {\tt sc\_ufixed}. 
 Not supported floating point C++ data types: {\tt float}, {\tt double}.
 
 C++ types can be used together with SC types. Signed and unsigned types should never be mixed, as that can lead to unexpected result for operations with negative values. For operations with mix of signed and unsigned arguments of {\tt sc\_int}/{\tt sc\_uint} types SystemC simulation can differ from generated SystemVerilog simulation. See more details in Section~\ref{section:arithmetic_gen}.
@@ -541,14 +579,19 @@ SC_CTOR(MyModule) {
 
 
 
-\subsection{Record and union types}
+\subsection{Record type}
 
 This section describes usage of record which are C++ structures or classes which are not modules and modular interfaces. Records intended to represent set of plain data fields. Record can be module member as well as local variables in process functions. 
 
-Records are supported with limitations. Record can have member functions and data type members. Record cannot have another record members, signal/port or module/modular interface members. Record cannot have any pointer or array members. Record cannot have any base classes.
-Record can have constructor, field in-place initialization and initializer list. Record constructor cannot have function calls.
+Records are supported with limitations. Record can have member functions and data members. Record member functions can contain wait() calls. Record can have members of C++/SC data types. Record cannot have another record members. Record cannot have signal/port or module/modular interface members. Record cannot have any pointer members. Record can have array members of C++/SC data types. Record cannot have array members of record. Record cannot have non-default copy/move constructors and operators.
 
-Array of records supported. Array of pointers to record supported.
+Record can have constructor, field in-place initialization and initializer list. Record constructor can contain function calls. Record field in-place initialization and constructor initializer list cannot contain function calls.
+
+Record can have one or multiple base classes. Record base class cannot have constructor body (constructor body should be empty), but can have initialization list and in-place initialization. Virtual functions in records are not supported.
+
+Array of records supported. Array of pointers to record is not supported. 
+
+Record reference supported. Pointer to record is not supported.
 
 Record can be passed to function by value as well as by reference/constant reference, such record must have trivial copy constructor. Record can be returned from function by value, such record must have trivial copy constructor.
 %
@@ -568,7 +611,51 @@ struct Rec2 {
 };
 \end{lstlisting}
 
+Record declaration with and without parameters supported in the following forms:
+%
+\begin{lstlisting}[style=mycpp]
+Rec1 r1;        	// OK
+Rec1 r1();        	// OK
+Rec1 r1{};        	// OK
+Rec1 r1 = Rec1{}; 	// Error
+Rec1 r1 = Rec1();  	// Error
+Rec2 r2(42);    	// OK
+Rec2 r2{42};    	// OK
+\end{lstlisting}
+
+Signal and port of record type are supported. Record used as signal and ports type should have a constructor without parameters. This constructor is used for the signal/ports initialization. Such a record should have {\tt operator==()} and {\tt operator<<(std::ostream)} and {\tt sc\_trace()} defined.
+Signal and ports of record can be read/written and assigned to a record variable.
+%
+\begin{lstlisting}[style=mycpp]
+struct SRec {
+    int x;
+    sc_int<2> y;
+    bool operator == (const SRec& other) {
+        return (x == other.x && y == other.y);
+    } 
+};
+::std::ostream& operator << (::std::ostream& os, const SRec& s) {
+    os << s.x << s.y;
+    return os;
+}
+...
+sc_in<SRec>     in{"in"};
+sc_out<SRec>    out{"out"};
+sc_signal<SRec> s{"s"};
+...
+SRec r1;          // OK
+r1 = in.read();   // OK
+r1 = s;           // OK
+s = Rec1();       // OK
+s.write(r1);      // OK
+out = r1;         // OK
+out = Rec1{};     // OK
+int x = in.read().x;   // OK
+\end{lstlisting}
+ 
 Code generation rules for record described in Section~\ref{section:record_gen}. 
+
+\subsection{Union type}
 
 Union type not supported.
 
@@ -608,10 +695,10 @@ Type cast to cast negative value to unsigned is prohibited. Type cast unsigned w
 %
 % method_cast.cpp
 \begin{lstlisting}[style=mycpp]
- unsigned u = 0x1FFFFFFFFUL;
- int i = -1;
- long l = (int)u;                    // Prohibited as result is negative value
- unsigned long ul = (unsigned)i;     // Prohibited as operand has negative value
+unsigned u = 0x1FFFFFFFFUL;
+int i = -1;
+long l = (int)u;                    // Prohibited as result is negative value
+unsigned long ul = (unsigned)i;     // Prohibited as operand has negative value
 \end{lstlisting}
 
 Type cast to base class supported for function call (T::f()) and member access (T::m).

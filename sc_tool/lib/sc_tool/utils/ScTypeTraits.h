@@ -22,10 +22,6 @@
 
 namespace sc {
     
-// Get canonical type with qualifiers removed, 
-// must be used to identify "const T" as T with @DeclDB
-clang::QualType getPureType(clang::QualType type);
-    
 struct IntTraits {
     IntTraits (size_t width, bool isSigned)
     : width(width), isSigned(isSigned) {}
@@ -47,24 +43,29 @@ bool isWaitDecl(const clang::FunctionDecl *funcDecl);
 /// Check is type is any signed type
 bool isSignedType(clang::QualType type);
 
-// Check if type is SystemC integer
+/// Check if type is SystemC integer
 bool isScInt(clang::QualType type);
 bool isScUInt(clang::QualType type);
 bool isScBigInt(clang::QualType type);
 bool isScBigUInt(clang::QualType type);
-// Check for @sc_bv
+/// Check for @sc_bv
 bool isScBitVector(clang::QualType type);
 
-// Is any of SystemC integer type
+/// Check for @sct_zero_width or sc_signal/sc_in/sc_out of @sct_zero_width type
+/// \return false for SS channel of @sct_zero_width
+bool isZeroWidthType(clang::QualType type);
+bool isZeroWidthArrayType(clang::QualType type);
+
+/// Is any of SystemC integer type
 bool isAnyScInteger(clang::QualType type);
-// Is any of SystemC integer type or SystemC subref/concatref
+/// Is any of SystemC integer type or SystemC subref/concatref
 bool isAnyScIntegerRef(clang::QualType type, bool checkPointer = false);
-// Is not supported SC integer types
+/// Is not supported SC integer types
 bool isScNotSupported(clang::QualType type, bool checkPointer);
 
-// Is any of C++ built-in, enum, SystemC integer type or SystemC subref/concatref
+/// Is any of C++ built-in, enum, SystemC integer type or SystemC subref/concatref
 bool isAnyIntegerRef(clang::QualType type);
-// Is any of C++ built-in, enum, SystemC integer type 
+/// Is any of C++ built-in, enum, SystemC integer type 
 bool isAnyInteger(clang::QualType type);
 
 /// Check array of @sc_int/@sc_bigint/@sc_uint/@sc_biguint type or 
@@ -77,11 +78,11 @@ llvm::Optional<size_t> getScUintBiguintBitVec(clang::QualType type);
 /// Check @sc_int or @sc_bigint type and optionally return bit number
 llvm::Optional<size_t> getScIntBigint(clang::QualType type);
 
-// Check type is @sc_signed which is base class for @sc_bigint but not template, 
-// used for operation result of @sc_bigint
+/// Check type is @sc_signed which is base class for @sc_bigint but not template, 
+/// used for operation result of @sc_bigint
 bool isScSigned(clang::QualType type);
-// Check type is @sc_unsigned which is base class for @sc_biguint but not template, 
-// used for operation result of @sc_biguint
+/// Check type is @sc_unsigned which is base class for @sc_biguint but not template, 
+/// used for operation result of @sc_biguint
 bool isScUnsigned(clang::QualType type);
 
 /// Try to get integer type for which width can be obtained by @getIntTraits()
@@ -137,11 +138,27 @@ bool isScChannel(clang::QualType type, bool checkPointer = true);
 /// \param checkPointer -- check array of pointers to channel
 bool isScChannelArray(clang::QualType type, bool checkPointer = true);
 
+/// Get record type if it is SC channel of record type, or none
+llvm::Optional<clang::QualType>  
+isUserClassChannel(clang::QualType type, bool checkPointer = true);
+
 /// Any the type in sc_core namespace
 bool isAnyScCoreObject(clang::QualType type);
 
 /// \return true if type is in sc_core namespace
 bool isScCoreType(clang::QualType type);
+
+/// ...
+bool isSctFifo(clang::QualType type);
+bool isSctTarg(clang::QualType type);
+bool isSctCombTarg(clang::QualType type);
+
+/// Check for SS channels used in sensitivity lists
+/// For ff_synchronizer only read()/operator bool() required to add in sensitivity 
+bool isSctChannelSens(clang::QualType type, const clang::FunctionDecl* funcDecl);
+
+/// Check if operator = is supported for type, sct_register and sct_ff_synchronizer
+bool isAssignOperatorSupported(clang::QualType type);
 
 bool isScProcess(clang::QualType type);
 bool isScMethod(clang::QualType type);

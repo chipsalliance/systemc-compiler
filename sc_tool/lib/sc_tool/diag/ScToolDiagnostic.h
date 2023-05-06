@@ -54,6 +54,12 @@ struct InternalErrorException : public std::exception {
 /// Initialized before starting source code processing
 void initDiagnosticEngine(clang::DiagnosticsEngine *diagEngine);
 
+/// Report error exception in HandleTranslationUnit
+void reportErrorException();
+
+/// Return -1 for error and -2 for fatal error
+int getDiagnosticStatus();
+
 /// Permanent Diagnostic IDs for issues in input source code.
 /// Use reportScDiag() to report a diagnostic message with permanent IDs.
 /// Please do not use for internal tool assertions, instead use assert()
@@ -209,6 +215,12 @@ public:
         SYNTH_PARENT_SAME_OBJECT    = 237,
         SYNTH_NO_RESET_PROCESS      = 238,
         SYNTH_FUNC_TYPE_IN_ASSERT   = 239,
+        SYNTH_NON_SENSTIV_THREAD    = 240,
+        SYNTH_EXTRA_SENSTIV_THREAD  = 241,
+        SYNTH_RECORD_INIT_LIST      = 242,
+        SYNTH_CHAN_RECORD_CONST     = 243,
+        SYNTH_CHAN_RECORD_TEMP      = 244,
+        SYNTH_INNER_RECORD          = 245,
         
         SC_FATAL_ELAB_TYPES_NS      = 300,
         SC_WARN_ELAB_UNSUPPORTED_TYPE,
@@ -642,7 +654,7 @@ private:
             {clang::DiagnosticIDs::Fatal, 
             "Dangling pointer dereference : %0"};
         idFormatMap[CPP_DANGLING_PTR_CAST] =
-            {clang::DiagnosticIDs::Error, 
+            {clang::DiagnosticIDs::Fatal, 
             "Dangling pointer casted to bool : %0"};
         idFormatMap[SYNTH_NONCOST_PTR_CONST] =
             {clang::DiagnosticIDs::Error, 
@@ -737,6 +749,31 @@ private:
         idFormatMap[SYNTH_INCORRECT_FUNC_CALL] =
             {clang::DiagnosticIDs::Error, 
              "Incorrect user defined method or function : %0"};
+        
+        idFormatMap[SYNTH_NON_SENSTIV_THREAD] =
+            {clang::DiagnosticIDs::Warning, 
+            "Process is not sensitive to SS channel used : %0"};
+        
+        idFormatMap[SYNTH_EXTRA_SENSTIV_THREAD] =
+            {clang::DiagnosticIDs::Warning, 
+            "Process is sensitive to SS channel not used : %0"};
+        
+        idFormatMap[SYNTH_RECORD_INIT_LIST] =
+            {clang::DiagnosticIDs::Error, 
+            "List initializer for record is not supported"};
+        
+        idFormatMap[SYNTH_CHAN_RECORD_CONST] =
+            {clang::DiagnosticIDs::Error, 
+            "Constant field is not allowed in channel type record, use static constant instead"};
+
+        idFormatMap[SYNTH_CHAN_RECORD_TEMP] =
+            {clang::DiagnosticIDs::Error, 
+            "No record found, temporary object should use default constructor"};
+        
+        idFormatMap[SYNTH_INNER_RECORD] =
+            {clang::DiagnosticIDs::Fatal, 
+            "Inner record is not supported"};
+        
         
         // Elaboration
         idFormatMap[SC_FATAL_ELAB_TYPES_NS] =
@@ -875,6 +912,11 @@ public:
             ScDiag::reportScDiag(ScDiag::TOOL_INTERNAL_ERROR) << msg; \
             assert (false);}
 #endif
+
+    /// Any error/fatal error/exception occured
+    bool hasError() {return engine->hasErrorOccurred();};
+    bool hasFatal() {return engine->hasFatalErrorOccurred();};
+    bool hasException = false;
     
 private:
     ScDiag() = default;

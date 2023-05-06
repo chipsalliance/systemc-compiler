@@ -30,7 +30,7 @@ using namespace llvm;
 
 
 namespace std {
-
+    
 std::size_t hash< std::pair<sc::SValue, bool> >::operator () (
                         const std::pair<sc::SValue, bool>& obj) const 
 {
@@ -205,11 +205,9 @@ string ScVerilogWriter::getVarDeclVerilog(const QualType& type,
                 getCanonicalTypeInternal();
     } while (ctype->isPointerType() || ctype->isArrayType());
     // Remove reference
-    if (ctype->isReferenceType()) {
-        ctype = ctype.getNonReferenceType();
-    }
+    ctype = getDerefType(ctype);
     
-    if (isUserDefinedClass(ctype)) {
+    if (isUserClass(ctype)) {
         string s;
         auto recDecl = ctype->getAsRecordDecl();
         bool first = true;
@@ -527,6 +525,7 @@ pair<string, string> ScVerilogWriter::getChannelName(const SValue& cval)
             // not used in thread processes, so not @varTraits for them
             auto j = extrValNames.find(cval);
             if (j != extrValNames.end()) {
+                //cout << "  external name " << j->second << endl;
                 return pair<string, string>(j->second, j->second); 
             }
             
@@ -780,21 +779,20 @@ uint64_t ScVerilogWriter::getLiteralAbs(const Stmt* stmt)
 }
 
 // Make literal term string in sized form if required
-std::string ScVerilogWriter::makeLiteralStr(const Stmt* stmt,
-                                            const std::string& literStr,
+std::string ScVerilogWriter::makeLiteralStr(const std::string& literStr,
                                             char radix, unsigned minCastWidth, 
                                             unsigned lastCastWidth,
                                             CastSign castSign,
                                             bool addNegBrackets)
 {
     APSInt val(literStr);
-    string s = makeLiteralStr(stmt, val, radix, minCastWidth, lastCastWidth, 
+    string s = makeLiteralStr(val, radix, minCastWidth, lastCastWidth, 
                               castSign, addNegBrackets);
     
     return s;
 }
 
-std::string ScVerilogWriter::makeLiteralStr(const Stmt* stmt, APSInt val,
+std::string ScVerilogWriter::makeLiteralStr(APSInt val,
                                             char radix, unsigned minCastWidth, 
                                             unsigned lastCastWidth,
                                             CastSign castSign, 
@@ -804,10 +802,9 @@ std::string ScVerilogWriter::makeLiteralStr(const Stmt* stmt, APSInt val,
     bool isOne = val == 1;
     bool isNegative = val < 0;
     unsigned bitNeeded = getBitsNeeded(val);
-//    cout << "literStr" << literStr << " getBitsNeeded " << bitNeeded 
+//    cout << "  getBitsNeeded " << bitNeeded 
 //         << " val.abs().getActiveBits() " << val.abs().getActiveBits() 
-//         << " val.getActiveBits() " << val.getActiveBits() 
-//         << " APSInt::getBitsNeeded " << APSInt::getBitsNeeded(literStr, 10) << endl;
+//         << " val.getActiveBits() " << val.getActiveBits() << endl;
     
     // It is possible to have no cast for non-negative literal in integer range
     bool valueCast = minCastWidth;
@@ -842,7 +839,7 @@ std::string ScVerilogWriter::makeLiteralStr(const Stmt* stmt, APSInt val,
                        radix == 8 ? "o" : "b");
     }
     
-//    cout << "literStr " << literStr << " isCast " << isCast << " minCastWidth "
+//    cout << "  isCast " << isCast << " minCastWidth "
 //         << minCastWidth << " isSignCast " << isSignCast << " isUnsignCast " 
 //         << isUnsignCast << endl;
 
@@ -866,7 +863,7 @@ std::string ScVerilogWriter::makeLiteralStr(const Stmt* stmt, APSInt val,
     if (isNegative && addNegBrackets) {
         s = '(' + s + ')';
     }
-    //cout << "makeLiteralStr " << literStr << " => "  << s << endl;
+//    cout << "  result " << s << endl;
 
     return s;
 }
@@ -957,7 +954,7 @@ pair<string, string> ScVerilogWriter::getTermAsRValue(const Stmt* stmt,
                     info.minCastWidth :
                     info.lastCastWidth ? info.lastCastWidth : info.exprWidth; 
         
-        rdName = makeLiteralStr(stmt, rdName, info.literRadix, minCastWidth, 
+        rdName = makeLiteralStr(rdName, info.literRadix, minCastWidth, 
                                 lastCastWidth, info.castSign, addNegBrackets);
         wrName = rdName;
 
@@ -983,8 +980,8 @@ pair<string, string> ScVerilogWriter::getTermAsRValue(const Stmt* stmt,
 void ScVerilogWriter::putString(const Stmt* stmt, 
                                 const TermInfo& info)
 {
-//    cout << "putString #" << hex << stmt << dec << " " << info.str.first
-//         << " exprWidth " << info.exprWidth << endl;
+    //cout << "putString #" << hex << stmt << dec << " " << info.str.first
+    //     << " exprWidth " << info.exprWidth << endl;
     SCT_TOOL_ASSERT (stmt, "putString stmt is NULL");
     auto i = terms.find(stmt);
     
@@ -1180,7 +1177,7 @@ void ScVerilogWriter::putAssignBase(const Stmt* stmt, const SValue& lval,
 {
     bool isReg = isRegister(lval) || isCombSig(lval) || isCombSigClear(lval) || 
                  isClearSig(lval);
-    bool isRecord = isUserDefinedClass(lval.getType(), true);
+    bool isRecord = isUserClass(getDerefType(lval.getType()), true);
     // Do not use non-blocking assignment for channel in METHOD
     bool nbAssign = isClockThreadReset && isReg;
     SCT_TOOL_ASSERT (!isRecord, "Record not expected in putAssignBase");
@@ -1459,7 +1456,7 @@ void ScVerilogWriter::putLiteral(const Stmt* stmt, const SValue& val)
     if (val.isInteger()) {
         string s = sc::APSintToString(val.getInteger(), 10);
         unsigned width = getBitsNeeded(val.getInteger());
-        char radix = val.getRadix();
+        char radix = val.getRadix() == 100 ? 10 : val.getRadix();
         
 //        cout << "putLiteral stmt #" << hex << stmt << dec << " val " << val 
 //             << " s " << s << " width " << width << endl;
@@ -1531,7 +1528,7 @@ void ScVerilogWriter::putVarDecl(const Stmt* stmt, const SValue& val,
     } else {
         // Normal variable declaration
         bool isReg = isRegister(val);
-        bool isRecord = isUserDefinedClass(val.getType(), true);
+        bool isRecord = isUserClass(getDerefType(val.getType()), true);
         // Initialization of local variable required for variables w/o initializer
         // and variables at no-zero level (funcCall variable is initialized)
         bool initZero = (isCombProcess && !emptySensitivity && 
@@ -1688,7 +1685,8 @@ void ScVerilogWriter::putArrayDecl(const Stmt* stmt, const SValue& val,
 
 // Put string of @init statement to use instead of the reference variable
 // Used for any non-constant reference 
-void ScVerilogWriter::storeRefVarDecl(const SValue& val, const Expr* init) 
+void ScVerilogWriter::storeRefVarDecl(const SValue& val, const Expr* init, 
+                                      bool checkNoTerms) 
 {
     if (skipTerm) return;
     SCT_TOOL_ASSERT (val.isVariable() || val.isTmpVariable(), "No variable found");
@@ -1696,11 +1694,16 @@ void ScVerilogWriter::storeRefVarDecl(const SValue& val, const Expr* init)
     if (terms.count(init) != 0) {
         // Replace reference with new string, required for second call of the function
         refValueDecl[val] = getTermAsRValue(init);
+        //cout << "storeRefVarDecl val " << val << " init " << refValueDecl[val].first << endl;
         
     } else {
-        SCT_INTERNAL_FATAL(init->getBeginLoc(),
-                           "putRefVarDecl : no term for right part " +
-                            llvm::to_hexString((size_t)init, false));
+        if (checkNoTerms) {
+            SCT_INTERNAL_FATAL(init->getBeginLoc(),
+                               "putRefVarDecl : no term for right part " +
+                                llvm::to_hexString((size_t)init, false));
+        } else {
+            // Do nothing, that is for reference to channel record
+        }
     }
 }
 
@@ -1953,13 +1956,13 @@ void ScVerilogWriter::putChannelExpr(const Stmt* stmt, const SValue& cval,
     
     // Get variable width, channel must always have determinable width 
     unsigned width = 0;
-    if (auto typeInfo = getIntTraits(cval.getScChannel()->getType())) {
+    QualType ctype = cval.getScChannel()->getType();
+    if (auto typeInfo = getIntTraits(ctype)) {
         width = typeInfo->first;
-        
     } else {
         ScDiag::reportScDiag(stmt->getBeginLoc(),
                              ScDiag::SYNTH_UNKNOWN_TYPE_WIDTH) << 
-                             cval.getScChannel()->getType().getAsString();
+                             ctype.getAsString();
     }
     
     // @true as it is a channel 
@@ -1986,7 +1989,8 @@ bool ScVerilogWriter::putLocalRefValueExpr(const Stmt* stmt, const SValue& val)
         
         putString(stmt, names, width);
 
-        //cout << "putLocalPtrValueExpr #" << hex << stmt << dec << " val " << val << " width " << width << endl;
+        //cout << "putLocalPtrValueExpr #" << hex << stmt << dec << " val " << val 
+        //     << " rdName " << names.first << endl;
         return true;
     }
     return false;
@@ -2034,7 +2038,7 @@ void ScVerilogWriter::putAssign(const Stmt* stmt, const SValue& lval,
 
             bool isReg = isRegister(lval) || isCombSig(lval) || 
                          isCombSigClear(lval) || isClearSig(lval);
-            bool isRecord = isUserDefinedClass(lval.getType(), true);
+            bool isRecord = isUserClass(getDerefType(lval.getType()), true);
             SCT_TOOL_ASSERT (!isRecord, "Unexpected record variable");
             
             // Use read name in @assign (emptySensitivity)
@@ -2076,7 +2080,7 @@ void ScVerilogWriter::putAssign(const Stmt* stmt, const SValue& lval,
 
         bool isReg = isRegister(lval) || isCombSig(lval) || 
                      isCombSigClear(lval) || isClearSig(lval);
-        bool isRecord = isUserDefinedClass(lval.getType(), true);
+        bool isRecord = isUserClass(getDerefType(lval.getType()), true);
         SCT_TOOL_ASSERT (!isRecord, "Unexpected record variable");
 
         // Use read name in @assign (emptySensitivity)
@@ -2102,39 +2106,115 @@ void ScVerilogWriter::putAssign(const Stmt* stmt, const SValue& lval,
 // Assignment for record variable (record copy)
 void ScVerilogWriter::putRecordAssign(const Stmt* stmt, 
                                       const SValue& lvar, const SValue& lrec, 
-                                      const SValue& rvar, const SValue& rrec,
+                                      const SValue& rrec,
                                       const string& lrecSuffix,
-                                      const string& rrecSuffix) 
+                                      const string& rrecSuffix,
+                                      llvm::Optional<clang::QualType> lchanRecType) 
 {
-    bool isReg = isRegister(lvar) || isCombSig(lvar) || isCombSigClear(lvar) ||
-                 isClearSig(lvar); 
+    //cout << "putRecordAssign lvar " << lvar << " lrec " << lrec << ", rrec " << rrec << endl;
+    //cout << "recSuffix " << lrecSuffix << " " << rrecSuffix << endl;
+    auto recDecl = lchanRecType ? (*lchanRecType)->getAsRecordDecl() : 
+                                  lrec.getType()->getAsRecordDecl();
+    auto fieldDecl = *recDecl->field_begin();
+    SValue lfval(fieldDecl, lrec);
+    
+    // No assign COMBSIG with CLEAR in clocked thread reset
+    if (isCombSigClear(lfval) && isClockThreadReset) {
+        clearStmt(stmt);
+        return;
+    }
+    // Check for register variable and first field (required for record channel)
+    bool isReg = isRegister(lvar) || isRegister(lfval) ||
+                 isCombSig(lvar) || isCombSigClear(lvar) || isClearSig(lvar); 
     bool nbAssign = isClockThreadReset && isReg;
     bool secName = !isClockThreadReset && isReg && !emptySensitivity;
-    if (!lrec.isRecord()) {
-        cout << "lrec " << lrec << " lvar " << lvar << endl;
-        SCT_INTERNAL_FATAL (stmt->getBeginLoc(), "lrec is not record value");
-    }
-    if (!rrec.isRecord()) {
-        cout << "rrec " << rrec << " rvar " << rvar << endl;
-        SCT_INTERNAL_FATAL (stmt->getBeginLoc(), "rrec is not record value");
-    }
-    //cout << "recSuffix " << lrecSuffix << " " << rrecSuffix << endl;
+    //cout << "  lfval " << lfval << " isReg " << isReg << endl;
     
     // Record assignment, assign all the fields
     string s;
     bool first = true;
-    auto recDecl = lrec.getType()->getAsRecordDecl();
-    
     for (auto fieldDecl : recDecl->fields()) {
+        // Skip zero width type
+        auto ftype = fieldDecl->getType();
+        if (isZeroWidthType(ftype) || isZeroWidthArrayType(ftype)) continue;
+        
         // Get name for LHS
         SValue lfval(fieldDecl, lrec);
-        const auto& lnames = getVarName(lfval);
+        //cout << "  lfval " << lfval << endl;
+        const auto& lnames = lrec.isScChannel() ? 
+                             getChannelName(lfval) : getVarName(lfval);
         string lhsName = (secName ? lnames.second : lnames.first) + lrecSuffix;
         
         // Get name for RHS, use read name here
         SValue rfval(fieldDecl, rrec);
-        const auto& rnames = getVarName(rfval);
+        //cout << "  rfval " << rfval << endl;
+        const auto& rnames = rrec.isScChannel() ? 
+                             getChannelName(rfval) : getVarName(rfval);
         string rhsName = rnames.first + rrecSuffix;
+
+        string f = lhsName + (nbAssign ? NB_ASSIGN_SYM : ASSIGN_SYM) + rhsName;
+        s = s + (first ? "" : "; ") + f;
+        first = false;
+    }
+
+    putString(stmt, s, 0);
+    clearSimpleTerm(stmt);
+}
+
+// Assignment record variable with temporary record object (T{}, T())
+void ScVerilogWriter::putRecordAssignTemp(const Stmt* stmt, 
+                                      const SValue& lvar, const SValue& lrec, 
+                                      const SValue& rrec,
+                                      const string& lrecSuffix,
+                                      llvm::Optional<clang::QualType> lchanRecType,
+                                      const ScState* state) 
+{
+    //cout << "putRecordAssignTemp lrec " << lrec << ", rrec " << rrec 
+    //     << ", recSuffix " << lrecSuffix << endl;
+    auto recDecl = lchanRecType ? (*lchanRecType)->getAsRecordDecl() : 
+                                  lrec.getType()->getAsRecordDecl();
+    auto fieldDecl = *recDecl->field_begin();
+    SValue lfval(fieldDecl, lrec);
+    
+    // No assign COMBSIG with CLEAR in clocked thread reset
+    if (isCombSigClear(lfval) && isClockThreadReset) {
+        clearStmt(stmt);
+        return;
+    }
+    // Check for register variable and first field (required for record channel)
+    bool isReg = isRegister(lvar) || isRegister(lfval) ||
+                 isCombSig(lvar) || isCombSigClear(lvar) || isClearSig(lvar); 
+    bool nbAssign = isClockThreadReset && isReg;
+    bool secName = !isClockThreadReset && isReg && !emptySensitivity;
+    
+    // Record assignment, assign all the fields
+    string s;
+    bool first = true;
+    for (auto fieldDecl : recDecl->fields()) {
+        // Skip zero width type
+        auto ftype = fieldDecl->getType();
+        if (isZeroWidthType(ftype) || isZeroWidthArrayType(ftype)) continue;
+        
+        // Get name for LHS
+        SValue lfval(fieldDecl, lrec);
+        //cout << "  lfval " << lfval << endl;
+        const auto& lnames = lrec.isScChannel() ? 
+                             getChannelName(lfval) : getVarName(lfval);
+        string lhsName = (secName ? lnames.second : lnames.first) + lrecSuffix;
+        
+        // Get RHS integer value
+        SValue rrval;
+        SValue rfval(fieldDecl, rrec);
+        state->getValue(rfval, rrval);
+        
+        string rhsName;
+        if (rrval.isInteger()) {
+            char radix = rrval.getRadix() == 100 ? 10 : rrval.getRadix();
+            rhsName = makeLiteralStr(rrval.getInteger(), radix, 
+                                     0, 0, CastSign::NOCAST, false);
+        } else {
+            rhsName = "0";
+        }
 
         string f = lhsName + (nbAssign ? NB_ASSIGN_SYM : ASSIGN_SYM) + rhsName;
         s = s + (first ? "" : "; ") + f;
@@ -2565,6 +2645,8 @@ void ScVerilogWriter::putBinary(const Stmt* stmt, string opcode,
         unsigned lwidth = getExprWidth(lhs);
         unsigned rwidth = getExprWidth(rhs);
         unsigned maxwidth = (lwidth > rwidth) ? lwidth : rwidth;
+        //cout << "lhs " << hex << lhs << dec << " lwidth " << lwidth << endl;
+        //cout << "rhs " << hex << rhs << dec << " rwidth " << rwidth << endl;
         
         if (opcode == "||" || opcode == "&&" || opcode == ">" ||
             opcode == "<" || opcode == ">=" || opcode == "<=" ||

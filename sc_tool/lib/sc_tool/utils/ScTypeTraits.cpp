@@ -33,6 +33,8 @@ namespace sc
 {
 
 namespace {
+    
+using std::cout; using std::endl; using std::hex; using std::dec;
 
 auto getDeclContexts(const clang::NamedDecl *decl)
 {
@@ -122,9 +124,10 @@ public:
     const clang::ClassTemplateDecl *stdVectorDecl;
     const clang::ClassTemplateDecl *stdArrayDecl;
     const clang::ClassTemplateDecl *scInDecl;
+    const clang::ClassTemplateDecl *sctInDecl;
     const clang::ClassTemplateDecl *scOutDecl;
+    const clang::ClassTemplateDecl *sctOutDecl;
     const clang::ClassTemplateDecl *scInOutDecl;
-    const clang::ClassTemplateDecl *scSignalDecl;
     const clang::ClassTemplateDecl *scPortDecl;
 };
 
@@ -230,17 +233,21 @@ DeclDB::DeclDB(const clang::ASTContext &ctx)
     SCT_TOOL_ASSERT(matches.size() > 0, "Error declaration match");
     scInDecl = matches[0].getNodeAs<ClassTemplateDecl>("sc_core::sc_in")->getCanonicalDecl();
 
+    matches = match(classTemplateDecl(hasName("sct::sct_in")).bind("sct::sct_in"), astCtx);
+    sctInDecl = matches.size() > 0 ? matches[0].getNodeAs<ClassTemplateDecl>(
+                                     "sct::sct_in")->getCanonicalDecl() : nullptr;
+
     matches = match(classTemplateDecl(hasName("sc_core::sc_out")).bind("sc_core::sc_out"), astCtx);
     SCT_TOOL_ASSERT(matches.size() > 0, "Error declaration match");
     scOutDecl = matches[0].getNodeAs<ClassTemplateDecl>("sc_core::sc_out")->getCanonicalDecl();
 
+    matches = match(classTemplateDecl(hasName("sct::sct_out")).bind("sct::sct_out"), astCtx);
+    sctOutDecl = matches.size() > 0 ? matches[0].getNodeAs<ClassTemplateDecl>(
+                                      "sct::sct_out")->getCanonicalDecl() : nullptr;
+
     matches = match(classTemplateDecl(hasName("sc_core::sc_inout")).bind("sc_core::sc_inout"), astCtx);
     SCT_TOOL_ASSERT(matches.size() > 0, "Error declaration match");
     scInOutDecl = matches[0].getNodeAs<ClassTemplateDecl>("sc_core::sc_inout")->getCanonicalDecl();
-
-    matches = match(classTemplateDecl(hasName("sc_core::sc_signal")).bind("sc_core::sc_signal"), astCtx);
-    SCT_TOOL_ASSERT(matches.size() > 0, "Error declaration match");
-    scSignalDecl = matches[0].getNodeAs<ClassTemplateDecl>("sc_core::sc_signal")->getCanonicalDecl();
 
     matches = match(classTemplateDecl(hasName("sc_core::sc_port")).bind("sc_core::sc_port"), astCtx);
     SCT_TOOL_ASSERT(matches.size() > 0, "Error declaration match");
@@ -252,14 +259,6 @@ DeclDB::DeclDB(const clang::ASTContext &ctx)
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
-
-// Get canonical type with qualifiers removed
-clang::QualType getPureType(clang::QualType type) 
-{
-    type = type.getCanonicalType();
-    type = type.getUnqualifiedType();
-    return type;
-}
 
 void initTypeTraits(const clang::ASTContext& astCtx)
 {
@@ -289,6 +288,7 @@ bool isWaitDecl(const clang::FunctionDecl *funcDecl)
 // Check is type is any signed type
 bool isSignedType(clang::QualType type) 
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     
     // Boolean is considered as logic unsigned
@@ -300,32 +300,56 @@ bool isSignedType(clang::QualType type)
 
 bool isScInt(clang::QualType type)
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     return isDerivedFrom(type, db->scIntBaseType);
 }
 
 bool isScUInt(clang::QualType type)
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     return isDerivedFrom(type, db->scUIntBaseType);
 }
 
 bool isScBigInt(clang::QualType type)
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     return isDerivedFrom(type, db->scSignedType);
 }
 
 bool isScBigUInt(clang::QualType type)
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     return isDerivedFrom(type, db->scUnsignedType);
 }
 
 bool isScBitVector(clang::QualType type)
 {
+    if (type.isNull()) return false;
     type = getPureType(type);
     return isDerivedFrom(type, db->scBitVector);
+}
+
+bool isZeroWidthType(clang::QualType type) {
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    if (auto chanType = isUserClassChannel(type)) {
+        type = *chanType;
+    }
+    return (!type.getAsString().compare("struct sc_dt::sct_zero_width"));
+}
+
+bool isZeroWidthArrayType(clang::QualType type) {
+    if (type.isNull()) return false;
+    type = getArrayElementType(type);
+    type = getPureType(type);
+    if (auto chanType = isUserClassChannel(type)) {
+        type = *chanType;
+    }
+    return (!type.getAsString().compare("struct sc_dt::sct_zero_width"));
 }
 
 bool isAnyScInteger(clang::QualType type)
@@ -494,6 +518,11 @@ llvm::Optional<std::pair<size_t, bool>> getIntTraits(clang::QualType type,
     }
     type = getPureType(type);
     
+    if (isZeroWidthType(type)) {
+        // ZWI value is 32bit unsigned
+        return std::pair<size_t, bool>(32, true);
+        
+    } else 
     if (auto etype = dyn_cast<EnumType>(type)) {
         auto edecl = etype->getDecl();
         size_t width= edecl->getNumPositiveBits() + edecl->getNumNegativeBits();
@@ -747,7 +776,8 @@ bool isScIn(clang::QualType type)
     if (type.isNull()) return false;
     type = getPureType(type);
     
-    return (getAsClassTemplateDecl(type) == db->scInDecl);
+    auto decl = getAsClassTemplateDecl(type);
+    return (decl == db->scInDecl || (db->sctInDecl && decl == db->sctInDecl));
 }
 
 bool isScOut(clang::QualType type)
@@ -755,7 +785,8 @@ bool isScOut(clang::QualType type)
     if (type.isNull()) return false;
     type = getPureType(type);
 
-    return (getAsClassTemplateDecl(type) == db->scOutDecl);
+    auto decl = getAsClassTemplateDecl(type);
+    return (decl == db->scOutDecl || (db->sctOutDecl && decl == db->sctOutDecl));
 }
 
 bool isScInOut(clang::QualType type)
@@ -857,6 +888,31 @@ bool isScChannelArray(clang::QualType type, bool checkPointer)
     return (isScChannel(type, false));
 }
 
+// Get record type if it is SC channel of record type, or none
+llvm::Optional<clang::QualType>  
+isUserClassChannel(clang::QualType type, bool checkPointer)
+{
+    if (type.isNull()) return llvm::None;
+    
+    // Remove pointer
+    if (checkPointer) {
+        // sc_port<IF> cannot point to channel
+        while (type->isPointerType()) {
+            type = type->getPointeeType();
+        }
+    }
+    type = getPureType(type);
+    
+    if ((!isScPort(type) && (isScSignal(type) || isScBasePort(type)))) {
+        auto chanType = getTemplateArgAsType(type, 0);
+        if (chanType && isUserClass(*chanType)) {
+            return *chanType;
+        }
+    }
+    return llvm::None;
+}
+
+
 // Any the type in sc_core namespace
 bool isAnyScCoreObject(clang::QualType type) 
 {
@@ -885,6 +941,63 @@ bool isScCoreType(clang::QualType type)
     }
     return false;
 }
+
+bool isSctFifo(clang::QualType type) {
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    
+    std::string typeStr = type.getAsString();
+    return (typeStr.find("sct_fifo") != std::string::npos);
+}
+
+bool isSctTarg(clang::QualType type) {
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    
+    std::string typeStr = type.getAsString();
+    return (typeStr.find("sct_target") != std::string::npos);
+}
+
+bool isSctCombTarg(clang::QualType type) {
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    
+    std::string typeStr = type.getAsString();
+    return (typeStr.find("sct_comb_target") != std::string::npos);
+}
+
+bool isSctChannelSens(clang::QualType type, const FunctionDecl* funcDecl) 
+{
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    
+    std::string typeStr = type.getAsString();
+    std::string funcNameStr = funcDecl ? funcDecl->getNameAsString() : "";
+    
+    return (typeStr.find("sct_target") != std::string::npos ||
+            typeStr.find("sct_comb_target") != std::string::npos ||
+            typeStr.find("sct_initiator") != std::string::npos ||
+            typeStr.find("sct_fifo") != std::string::npos ||
+            typeStr.find("sct_register") != std::string::npos ||
+            typeStr.find("sct_multi_target") != std::string::npos ||
+            typeStr.find("sct_multi_initiator") != std::string::npos ||
+            (typeStr.find("sct_ff_synchronizer") != std::string::npos &&
+             (funcNameStr.empty() || 
+              funcNameStr.find("read") != std::string::npos ||
+              funcNameStr.find("operator bool") != std::string::npos))
+            );
+}
+
+bool isAssignOperatorSupported(clang::QualType type) 
+{
+    if (type.isNull()) return false;
+    type = getPureType(type);
+    
+    std::string typeStr = type.getAsString();
+    return (typeStr.find("sct_register") != std::string::npos ||
+            typeStr.find("sct_ff_synchronizer") != std::string::npos);
+}
+
 
 bool isScProcess(clang::QualType type)
 {
