@@ -5,18 +5,34 @@
 * 
 *****************************************************************************/
 
-//
-// Created by mmoiseev on 06/27/19s.
-//
-
 #include <systemc.h>
 
-// Fix me, see #116
-
-// Module with @sc_port to dynamically allocated module object
+// Module with @sc_port to a MIF vector element
 template<typename T>
 struct port_if : public sc_interface {
     virtual void f(T val) = 0;
+};
+
+template<typename T>
+struct Target : public sc_module, port_if<T> 
+{
+    sc_signal<T> r;
+
+    SC_HAS_PROCESS(Target);
+
+    explicit Target (sc_module_name name) : 
+        sc_module(name) 
+    {
+        SC_METHOD(tarMeth); sensitive << r;
+    }
+
+    void tarMeth() {
+        T a = r.read();       
+    }
+
+    void f(T val) override {
+        r = val;
+    }
 };
 
 template<typename T>
@@ -30,13 +46,12 @@ struct AhbSlave : public sc_module, sc_interface
     sc_port<port_if<T> >  slave_port;
     
     SC_CTOR(AhbSlave) {
-        SC_METHOD(methProc);
-        sensitive << s;
+        SC_METHOD(methProc); sensitive << s;
     }
     
     void methProc() 
     {
-        slave_port->f(s.read());   // Incorrect code: targ_r instead of targ_r[0]
+        slave_port->f(s.read());   
     }
 };
 
@@ -47,29 +62,6 @@ struct Dut : public sc_module
 
     using T = sc_uint<4>;
 
-    template<typename T>
-    struct Target : public sc_module, port_if<T> 
-    {
-        sc_signal<T> r;
-
-        SC_HAS_PROCESS(Target);
-        
-        explicit Target (sc_module_name name) : 
-            sc_module(name) 
-        {
-            SC_METHOD(tarMeth); 
-            sensitive << r;
-        }
-        
-        void tarMeth() {
-            T a = r.read();       // Incorrect code: targ_r instead of targ_r[0]
-        }
-
-        void f(T val) {
-            r = val;
-        }
-    };
-
     AhbSlave<T>             slave{"slave"};
     sc_vector< Target<T> >  tars{"tars", 2};
     
@@ -79,7 +71,7 @@ struct Dut : public sc_module
     {
         slave.clk(clk);
         slave.nrst(nrst);
-        slave.slave_port(tars[0]);
+        slave.slave_port(tars[1]);
     }
 };
 

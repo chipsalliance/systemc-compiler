@@ -123,8 +123,8 @@ Object* getOuterArray(SCDesign& designDB, Object* memberObj)
     return arrayObj;
 }
 
-const std::string SCElabASTConsumer::TOOL_VERSION = "1.5.9";
-const std::string SCElabASTConsumer::TOOL_DATE = "Apr 07,2023";
+const std::string SCElabASTConsumer::TOOL_VERSION = "1.5.11";
+const std::string SCElabASTConsumer::TOOL_DATE = "May 19,2023";
 
 void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
 {
@@ -144,7 +144,7 @@ void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
     //const char* optNames[] = {doGenTerm, doGenCfg, doGenStmt, doModuleBuilder};
     //const char* optNames[] = {doConstCfg, doConstLoop, doConstStmt, doConstBlock, doModuleBuilder};
     //const char* optNames[] = {doGenStmt, doConstStmt, doModuleBuilder};  
-    //const char* optNames[] = {doConstStmt, doGenStmt, doModuleBuilder};  
+    //const char* optNames[] = {doGenStmt, doModuleBuilder};  
     const char* optNames[] = {doModuleBuilder};
     size_t optSize = sizeof(optNames)/sizeof(const char*);
     //DebugOptions::enable(optNames, optSize);
@@ -177,7 +177,7 @@ void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
 
     if (auto recordDecl = topType->getAsCXXRecordDecl()) {
 
-        llvm::outs() << "Top-level module is " << recordDecl->getName() << "\n";
+        std::cout << "Top module is " << recordDecl->getName().str() << std::endl;
 
         try { 
             // Run Dynamic elaborator, it will fill Protobuf SCDesign
@@ -189,6 +189,7 @@ void SCElabASTConsumer::HandleTranslationUnit(clang::ASTContext &astCtx)
             // elabDB stores designDB, elabTypeManager, astCtx and generated Verilog modules
             ElabDatabase elabDB(designDB, elabTypeManager, astCtx);
             DEBUG_WITH_TYPE(DebugOptions::doElab, elabDB.dump(););
+            std::cout << "Elaboration database created\n" << std::endl;
 
             // To get Clang AST FieldDecl for Object it needs to create 
             // ObjectView for Object and elabDB and call getFieldDecl():

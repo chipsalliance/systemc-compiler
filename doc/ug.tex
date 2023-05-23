@@ -3,16 +3,21 @@
 \begin{document}
 
 %% Define for Intel internal document
-\newif\INTEL
+%\newif\INTEL
  
 \title[Intel Compiler for SystemC User Guide]{Intel Compiler for SystemC \\ User Guide}
 \subtitle{version 1.5}
 
 \author{Mikhail Moiseev}
 \ifdefined\INTEL
+\affiliation[obeypunctuation=true]{
+	\institution{Intel Corporation, Intel Labs}
+	\country{}
+}
 \else
 \affiliation[obeypunctuation=true]{
-	\institution{Intel Corporation}
+	\institution{Intel Corporation }
+	\country{}
 }
 \fi
 
@@ -31,9 +36,9 @@
 
 \section{Preface}
 
-Intel\textregistered Compiler for SystemC* (ICSC) is open source tool distributed under \href{https://github.com/intel/systemc-compiler/blob/main/LICENSE.txt}{Apache License v2.0 with LLVM Exceptions}. The source codes are available at \href{https://github.com/intel/systemc-compiler}{github.com/intel/systemc-compiler}.
+Intel\textregistered Compiler for SystemC (ICSC) is open source tool distributed under \href{https://github.com/intel/systemc-compiler/blob/main/LICENSE.txt}{Apache License v2.0 with LLVM Exceptions}. The source codes are available at \href{https://github.com/intel/systemc-compiler}{github.com/intel/systemc-compiler}.
 
-This ICSC User Guide document intended to help user to install and run the tool, prepare SystemC design to be translated into SystemVerilog and understand the result SystemVerilog code. The User Guide document also describes some common cases in hardware design, ICSC extensions and advanced verification features.
+This ICSC User Guide document intended to help user to install and run the tool, prepare SystemC design to be translated into SystemVerilog and understand the result SystemVerilog code. The User Guide document also describes some common cases in hardware design, SingleSource library of communication channels and advanced verification features.
 %
 There are two main documents referenced in this User Guide: 
 \begin{itemize}
@@ -79,6 +84,10 @@ In this document the following abbreviations are used:
 
 \include{trans_flow}
 
+\include{single_source}
+
+\include{assertions}
+
 \section{Extensions}\label{section:extensions}
 
 \ifdefined\INTEL
@@ -87,6 +96,6 @@ In this document the following abbreviations are used:
 
 \include{extensions}
 
-\include{errors}
+%\include{errors}
 
 \end{document}
